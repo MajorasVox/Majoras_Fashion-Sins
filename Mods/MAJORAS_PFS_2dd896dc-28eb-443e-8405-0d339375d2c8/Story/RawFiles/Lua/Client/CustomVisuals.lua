@@ -1,6 +1,6 @@
 ---@alias VisualCreationData {ID:FixedString, Params:ClientMultiVisualAddVisualOptions}
 ---@alias EffectCreationData {Effect:FixedString, WeaponBones:string}
----@alias VisualSettingsData {ID:string, CanCreate:(fun(character:EclCharacter, params:EclEquipmentVisualSystemSetParam):boolean)|nil, Visuals:VisualCreationData[], Effects:EffectCreationData[]}
+---@alias VisualSettingsData {ID:string, CanCreate:(fun(character:EclCharacter, params:EclEquipmentVisualSystemSetParam):boolean)|nil, Visuals:VisualCreationData[], Effects:EffectCreationData[], CanDelete:(fun(character:EclCharacter, params:EclEquipmentVisualSystemSetParam):boolean)|nil}
 ---@alias CharacterVisualRootData {ID:string, Require:{VisualTemplate:FixedString|nil}|nil, Visuals:VisualSettingsData[]}
 
 ---@type table<NETID, table<string, table<string, ComponentHandle>>>
@@ -27,6 +27,12 @@ local VisualSettings = {
 				---@param params EclEquipmentVisualSystemSetParam
 				CanCreate = function(character, params)
 					return params.VisualResourceID == "af0f09bf-3960-4392-bacb-9b8af45c633e" --	and not _HelmetIsHidden(character)
+				end,
+				---@param character EclCharacter
+				---@param params EclEquipmentVisualSystemSetParam
+				CanDelete = function(character, params)
+					--Only delete the visual if the requested equipment slot is the chest slot
+					return params.Slot == "Breast"
 				end,
 				Visuals = {
 					{
@@ -76,6 +82,16 @@ end
 
 ---@param character EclCharacter
 ---@param data VisualSettingsData
+---@param creationParams EclEquipmentVisualSystemSetParam
+local function _CanDelete(character, data, creationParams)
+	if data.CanDelete then
+		return data.CanDelete(character, creationParams)
+	end
+	return true
+end
+
+---@param character EclCharacter
+---@param data VisualSettingsData
 ---@param handlers table<string, ComponentHandle>
 ---@param creationParams EclEquipmentVisualSystemSetParam
 local function _ProcessVisualSettings(character, data, handlers, creationParams)
@@ -87,7 +103,6 @@ local function _ProcessVisualSettings(character, data, handlers, creationParams)
 	end
 	if data.CanCreate(character, creationParams) then
 		if not handler then
-			Ext.Utils.PrintError("Creating visual handler for %s", data.ID)
 			handler = Ext.Visual.CreateOnCharacter(character.Translate, character, character)
 			if data.Visuals then
 				for _,v in pairs(data.Visuals) do
@@ -103,8 +118,7 @@ local function _ProcessVisualSettings(character, data, handlers, creationParams)
 			end
 			handlers[data.ID] = handler.Handle
 		end
-	elseif handler then
-		Ext.Utils.PrintError("Deleting visual %s", data.ID)
+	elseif handler and _CanDelete(character, data, creationParams) then
 		handler:Delete()
 		handlers[data.ID] = nil
 	end
@@ -127,11 +141,9 @@ local function _ProcessCharacterSettings(character, data, allHandlers, creationP
 		if addedVisual then
 			allHandlers[data.ID] = handlers
 		end
-	else
-		if handlers then
-			_DeleteHandlers(handlers)
-			allHandlers[data.ID] = nil
-		end
+	elseif handlers then
+		_DeleteHandlers(handlers)
+		allHandlers[data.ID] = nil
 	end
 	return addedVisual
 end
@@ -152,10 +164,12 @@ Ext.Events.CreateEquipmentVisualsRequest:Subscribe(function (e)
 	end
 end)
 
-Events.BeforeLuaReset:Subscribe(function (e)
-	for netid,allHandlers in pairs(_CreatedHandlers) do
-		for id,handlers in pairs(allHandlers) do
-			_DeleteHandlers(handlers)
+if Mods.LeaderLib then
+	Mods.LeaderLib.Events.BeforeLuaReset:Subscribe(function (e)
+		for netid,allHandlers in pairs(_CreatedHandlers) do
+			for id,handlers in pairs(allHandlers) do
+				_DeleteHandlers(handlers)
+			end
 		end
-	end
-end)
+	end)
+end
